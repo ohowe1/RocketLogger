@@ -30,8 +30,7 @@ struct Entry {
     int32_t lastWrittenValue;
 };
 
-// 5hz
-const unsigned long updateTimeMs = 100;
+const unsigned long updateTimeMs = 10;
 
 Entry gyroX = {0, 500, 0};
 Entry gyroY = {1, 500, 0};
@@ -281,7 +280,7 @@ void logModeLoop() {
         somethingWrote |= logIfAboveEpoch(currentTime, magnetometer.y, magY);
         somethingWrote |= logIfAboveEpoch(currentTime, magnetometer.z, magZ);
 
-        int32_t rawPressure = (int32_t) pressureSensor.readPressure();
+        auto rawPressure = (int32_t) pressureSensor.readPressure();
         somethingWrote |= logIfAboveEpoch(currentTime, rawPressure, pressure);
     }
 
@@ -328,7 +327,7 @@ void setup() {
         }
         fail("Failed to open file");
     }
-    if (!pressureSensor.begin()) {
+    if (!pressureSensor.begin(0x76)) {
         fail("Failed to initialize BMP280");
     }
     if (!accelGyroSensor.begin_I2C()) {

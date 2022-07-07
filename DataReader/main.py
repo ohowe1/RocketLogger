@@ -19,47 +19,72 @@ id_to_name = {
     8: ('MagZ', magnetometer_multiplier, 0),
     9: ('Pressure', 1, 0),
     10: ('Temperature', 1 / 256, 25),
+    11: ('Exterior Temperature', 100, 0),
 }
+
+ENTRY_SIZE = 4
 
 f = open('data.log', 'rb')
 raw_data = f.read()
 
-full_entries = (len(raw_data)) // 8
+amount_of_bytes = len(raw_data)
+full_entries = amount_of_bytes // ENTRY_SIZE
 print(f'Found {full_entries} entries.')
 
 # Read data from file
 data = {}
 timestamps = set()
-for i in range(0, full_entries * 8, 8):
-    entry = raw_data[i:i + 12]
-    # Make 3 bit 4 bit
-    value_bytes = entry[0:3] + bytes(1)
-    value = struct.unpack('i', value_bytes)[0]
-    # Negative
-    if ((value >> 23) & 0x01) != 0:
-        value = value - (1 << 24)
-
-    id_ = entry[3]
-    timestamp = struct.unpack('I', entry[4:8])[0]
-
-    if id_ not in id_to_name:
-        print(f'WARN: {id_} does not have a name. Using number as name')
-        id_name = str(id_)
-        multiplier = 1
-        additive = 0
+awaiting_timestamp_buffer = []
+i = 0
+while i < amount_of_bytes:
+    if i >> 6 == 0b11:
+        if i & 0b00111111 == len(awaiting_timestamp_buffer):
+            # Validation byte
+            i += 1
+            timestamp_bytes = raw_data[i + 1]
+            timestamp = struct.unpack('i', timestamp_bytes)[0]
+            timestamps.add(timestamp)
+            for awaiting in awaiting_timestamp_buffer:
+                id_name = awaiting[0]
+                value = awaiting[1]
+                if id_name not in data:
+                    data[id_name] = {}
+                    data[id_name][timestamp] = value
+                print(f'Id: {id_name}, Timestamp: {timestamp}, Value: {value}')
+            i += 4
+        else:
+            print(f'ERR: Invalid timestamp at byte {i}')
+            sys.exit()
     else:
-        id_name = id_to_name[id_][0]
-        multiplier = id_to_name[id_][1]
-        additive = id_to_name[id_][2]
+        if i + ENTRY_SIZE <= amount_of_bytes:
+            print('WARN: Could not complete entry! Continuing with current entries')
+            break
+        else:
+            entry = raw_data[i:i + ENTRY_SIZE]
+            # Make 3 bit 4 bit
+            value_bytes = entry[0:3] + bytes(1)
+            value = struct.unpack('i', value_bytes)[0]
+            # Negative
+            if ((value >> 23) & 0x01) != 0:
+                value = value - (1 << 24)
+            id_ = entry[3]
 
-    value *= multiplier
-    print(f'Id: {id_name}, Timestamp: {timestamp}, Value: {value}')
+            if id_ not in id_to_name:
+                print(f'WARN: {id_} does not have a name. Using number as name')
+                id_name = str(id_)
+                multiplier = 1
+                additive = 0
+            else:
+                id_name = id_to_name[id_][0]
+                multiplier = id_to_name[id_][1]
+                additive = id_to_name[id_][2]
 
-    if id_name not in data:
-        data[id_name] = {}
-    data[id_name][timestamp] = value
+            value *= multiplier
+            value += additive
+            awaiting_timestamp_buffer.append((id_name, value))
 
-    timestamps.add(timestamp)
+            i += ENTRY_SIZE
+
 
 data_names = sorted(list(data.keys()))
 

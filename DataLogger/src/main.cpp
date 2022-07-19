@@ -6,7 +6,6 @@
 #include "Adafruit_ST7789.h"
 #include "Readable_Adafruit_LSM6DS33.h"
 #include "BluetoothManager.h"
-#include "Parachute.h"
 
 #define BLACK    0x0000
 #define BLUE     0x001F
@@ -17,10 +16,9 @@
 #define YELLOW   0xFFE0
 #define WHITE    0xFFFF
 
-#define TWENTY_FOUR_BITS 0b00000000111111111111111111111111
-
 #define LEFT_BUTTON 5
 #define RIGHT_BUTTON 11
+#define TONE_PIN 46
 
 [[noreturn]] void suspend() {
     while (true);
@@ -33,28 +31,34 @@ struct Entry {
     int32_t lastWrittenValue;
 };
 
-const unsigned long updateTimeMs = 10;
+const unsigned long updateTimeMs = 100;
 
 // Do not have any ids >= 192
+// 1 rad/s is 6548
 Entry gyroXEntry = {0, 500, 0};
 Entry gyroYEntry = {1, 500, 0};
 Entry gyroZEntry = {2, 500, 0};
+// 1 m/s^2 is 835 units
 Entry accelXEntry = {3, 100, 0};
 Entry accelYEntry = {4, 100, 0};
 Entry accelZEntry = {5, 100, 0};
-Entry magXEntry = {6, 500, 0};
-Entry magYEntry = {7, 500, 0};
-Entry magZEntry = {8, 500, 0};
-Entry pressureEntry = {9, 50, 0};
-Entry temperatureEntry = {10, 128, 0};
-Entry exteriorTemperatureEntry = {11, 128, 0};
+// 1 gauss is 6842 units
+Entry magXEntry = {6, 750, 0};
+Entry magYEntry = {7, 750, 0};
+Entry magZEntry = {8, 750, 0};
+// 1 is 1 Pa. 1 foot in altitude is about 5 Pa
+Entry pressureEntry = {9, 10, 0};
+// 1 degree c is 256
+Entry interiorTemperatureEntry = {10, 128, 0};
+// 1 degree c is 100
+Entry exteriorTemperatureEntry = {11, 50, 0};
 
 struct EntryData {
     int32_t idAndValue;
 };
 
 struct TimeStampData {
-    uint8_t startAndAmount;
+    uint32_t startAndAmount;
     uint32_t timeStamp;
 };
 
@@ -70,8 +74,6 @@ Adafruit_SPIFlash flash(&flashTransport);
 FatFileSystem fatFileSystem;
 File logFile;
 
-Parachute* parachute = new Parachute();
-
 bool inLogMode;
 
 void writeBytesAndCheckCorruption(uint8_t* bytes, size_t amount) {
@@ -83,7 +85,7 @@ void writeBytesAndCheckCorruption(uint8_t* bytes, size_t amount) {
 }
 
 void logValue(uint8_t id, int32_t value) {
-    EntryData newData = {(value << 8) | id};
+    EntryData newData = {((value << 8) | (id))};
 
     writeBytesAndCheckCorruption(reinterpret_cast<uint8_t*>(&newData), sizeof(EntryData));
 }
@@ -91,17 +93,17 @@ void logValue(uint8_t id, int32_t value) {
 int logIfAboveEpoch(int32_t value, Entry& entry) {
     if (abs(value - entry.lastWrittenValue) >= entry.epoch) {
         entry.lastWrittenValue = value;
-        delay(20);
         logValue(entry.id, value);
         return 1;
     }
     return 0;
 }
 
-void logTimeStamp(uint32_t timeStamp, uint8_t amountLogged) {
-    TimeStampData timeStampData = {(uint8_t) (amountLogged | 0b11000000), timeStamp};
+void logTimeStamp(uint8_t amountLogged, uint32_t timeStamp) {
+    uint32_t amountLoggedFlagged = (amountLogged << 24) | 0x00ffffff;
+    TimeStampData timeStampData = {amountLoggedFlagged, timeStamp};
 
-    writeBytesAndCheckCorruption(reinterpret_cast<uint8_t*>(&timeStampData), sizeof(timeStampData));
+    writeBytesAndCheckCorruption(reinterpret_cast<uint8_t*>(&timeStampData), sizeof(TimeStampData));
 }
 
 int initialLog(int32_t value, Entry& entry) {
@@ -165,6 +167,7 @@ void initializeDisplay() {
     displayWrapped(error, 1);
     while (true) {
         digitalWrite(17, HIGH);
+        tone(TONE_PIN, 2000, 400);
         delay(400);
         digitalWrite(17, LOW);
         delay(400);
@@ -174,6 +177,7 @@ void initializeDisplay() {
 void logModeSetup() {
     clearDisplay();
     displayWrapped("Logging will start in 2 seconds", 2);
+    tone(TONE_PIN, 500, 2000);
     delay(2000);
     // Turn off backlight
     analogWrite(34, 0);
@@ -181,6 +185,7 @@ void logModeSetup() {
 
     unsigned long currentTime = millis();
     int amountWritten = 0;
+
     accelGyroSensor->read();
     amountWritten += initialLog(accelGyroSensor->rawGyroX, gyroXEntry);
     amountWritten += initialLog(accelGyroSensor->rawGyroY, gyroYEntry);
@@ -190,7 +195,7 @@ void logModeSetup() {
     amountWritten += initialLog(accelGyroSensor->rawAccY, accelYEntry);
     amountWritten += initialLog(accelGyroSensor->rawAccZ, accelZEntry);
 
-    amountWritten += initialLog(accelGyroSensor->rawTemp, temperatureEntry);
+    amountWritten += initialLog(accelGyroSensor->rawTemp, interiorTemperatureEntry);
 
     magnetometer->read();
     amountWritten += initialLog(magnetometer->x, magXEntry);
@@ -204,11 +209,9 @@ void logModeSetup() {
     amountWritten += initialLog(rawPressure, pressureEntry);
 
 
-    logTimeStamp(currentTime, amountWritten);
+    logTimeStamp(amountWritten, currentTime);
 
     logFile.flush();
-
-    parachute->setup(pressure);
 }
 
 unsigned long lastUpdateMs = 0;
@@ -228,7 +231,7 @@ void logModeLoop() {
         amountWritten += logIfAboveEpoch(accelGyroSensor->rawAccY, accelYEntry);
         amountWritten += logIfAboveEpoch(accelGyroSensor->rawAccZ, accelZEntry);
 
-        amountWritten += logIfAboveEpoch(accelGyroSensor->rawTemp, temperatureEntry);
+        amountWritten += logIfAboveEpoch(accelGyroSensor->rawTemp, interiorTemperatureEntry);
 
         magnetometer->read();
         amountWritten += logIfAboveEpoch(magnetometer->x, magXEntry);
@@ -241,13 +244,9 @@ void logModeLoop() {
         auto rawPressure = (int32_t) pressure;
         amountWritten += logIfAboveEpoch(rawPressure, pressureEntry);
 
-        amountWritten += logIfAboveEpoch(stateDetector->getState(), stateEntry);
-
         if (amountWritten > 0) {
-            logTimeStamp(currentTime, amountWritten);
+            logTimeStamp(amountWritten, currentTime);
         }
-
-        parachute->update(pressure, accelGyroSensor->accZ);
     }
 
     if (currentTime - lastFlushMs > 1000) {
@@ -273,7 +272,7 @@ void retrieveModeSetup() {
             displayWrapped("Click left to send data by serial", 2);
             display->println();
             display->setTextColor(CYAN);
-            displayWrapped("Click right to test deploy the parachute", 2);
+            displayWrapped("Placeholder", 2);
             delay(100);
             while (true) {
                 if (!digitalRead(LEFT_BUTTON)) {
@@ -295,12 +294,9 @@ void retrieveModeSetup() {
                     suspend();
                 }
                 if (!digitalRead(RIGHT_BUTTON)) {
-                    parachute->deployParachute();
-
                     clearDisplay();
-                    displayWrapped("Deployed", 2);
-                    display->println();
-                    displayWrapped("Use reset button to proceed", 2);
+                    display->setTextColor(MAGENTA);
+                    displayWrapped("Placeholder", 2);
                 }
             }
         }
@@ -314,7 +310,7 @@ void retrieveModeSetup() {
                     displayWrapped("File erased", 2);
                     display->println();
                     displayWrapped("Use reset button to proceed", 2);
-                    tone(46, 1000, 100);
+                    tone(TONE_PIN, 1000, 100);
                     suspend();
                 }
                 fail("Failed to erase file");
@@ -333,6 +329,7 @@ void setup() {
     // Buttons
     pinMode(LEFT_BUTTON, INPUT_PULLUP);
     pinMode(RIGHT_BUTTON, INPUT_PULLUP);
+    pinMode(1, INPUT_PULLUP);
     // Light
     pinMode(17, OUTPUT);
     // Power led type thing
@@ -382,8 +379,9 @@ void setup() {
 
     bluetooth::startBluetooth();
 
+    uint32_t startMillis = millis();
     while (true) {
-        if (!digitalRead(LEFT_BUTTON)) {
+        if (!digitalRead(LEFT_BUTTON) || (!digitalRead(1) && millis() - startMillis > 2000)) {
             inLogMode = true;
             break;
         }

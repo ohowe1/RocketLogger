@@ -35,19 +35,19 @@ const unsigned long updateTimeMs = 100;
 
 // Do not have any ids >= 192
 // 1 rad/s is 6548
-Entry gyroXEntry = {0, 500, 0};
-Entry gyroYEntry = {1, 500, 0};
-Entry gyroZEntry = {2, 500, 0};
-// 1 m/s^2 is 835 units
-Entry accelXEntry = {3, 100, 0};
-Entry accelYEntry = {4, 100, 0};
-Entry accelZEntry = {5, 100, 0};
+Entry gyroXEntry = {0, 350, 0};
+Entry gyroYEntry = {1, 350, 0};
+Entry gyroZEntry = {2, 350, 0};
+// 1 m/s^2 is 417 units
+Entry accelXEntry = {3, 40, 0};
+Entry accelYEntry = {4, 40, 0};
+Entry accelZEntry = {5, 40, 0};
 // 1 gauss is 6842 units
-Entry magXEntry = {6, 750, 0};
-Entry magYEntry = {7, 750, 0};
-Entry magZEntry = {8, 750, 0};
+Entry magXEntry = {6, 6842, 0};
+Entry magYEntry = {7, 6842, 0};
+Entry magZEntry = {8, 6842, 0};
 // 1 is 1 Pa. 1 foot in altitude is about 5 Pa
-Entry pressureEntry = {9, 10, 0};
+Entry pressureEntry = {9, 5, 0};
 // 1 degree c is 256
 Entry interiorTemperatureEntry = {10, 128, 0};
 // 1 degree c is 100
@@ -195,8 +195,6 @@ void logModeSetup() {
     amountWritten += initialLog(accelGyroSensor->rawAccY, accelYEntry);
     amountWritten += initialLog(accelGyroSensor->rawAccZ, accelZEntry);
 
-    amountWritten += initialLog(accelGyroSensor->rawTemp, interiorTemperatureEntry);
-
     magnetometer->read();
     amountWritten += initialLog(magnetometer->x, magXEntry);
     amountWritten += initialLog(magnetometer->y, magYEntry);
@@ -206,8 +204,9 @@ void logModeSetup() {
 
     float pressure = pressureSensor->readPressure();
     auto rawPressure = (int32_t) pressure;
-    amountWritten += initialLog(rawPressure, pressureEntry);
 
+    amountWritten += initialLog(accelGyroSensor->rawTemp, interiorTemperatureEntry);
+    amountWritten += initialLog(rawPressure, pressureEntry);
 
     logTimeStamp(amountWritten, currentTime);
 
@@ -247,6 +246,7 @@ void logModeLoop() {
         if (amountWritten > 0) {
             logTimeStamp(amountWritten, currentTime);
         }
+        lastUpdateMs = currentTime;
     }
 
     if (currentTime - lastFlushMs > 1000) {

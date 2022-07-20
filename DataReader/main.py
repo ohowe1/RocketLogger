@@ -5,7 +5,7 @@ import sys
 from bisect import bisect_left
 
 gyro_multiplier = 8.75 * 0.017453293 / 1000
-acceleration_multiplier = 0.061 * 9.80665 * 2 / 1000
+acceleration_multiplier = 0.122 * 9.80665 * 2 / 1000
 magnetometer_multiplier = 1 / 6842
 id_to_name = {
     0: ('GyroX (rad/s)', gyro_multiplier, 0),
@@ -35,27 +35,36 @@ data = {}
 timestamps = set()
 awaiting_timestamp_buffer = []
 i = 0
+has_first_timestamp = False
+first_timestamp = 0
 while i < amount_of_bytes:
     if raw_data[i] == 0xff:
-        print('In timestamp')
         if i + 8 <= amount_of_bytes and struct.unpack('I', raw_data[i:i+3] + bytes(1))[0] == 0xffffff:
             if (raw_data[i + 3]) == len(awaiting_timestamp_buffer):
-                print('Found valid timestamp')
                 # Validation bytes
                 i += 4
                 timestamp_bytes = raw_data[i:i+4]
                 timestamp = struct.unpack('I', timestamp_bytes)[0]
+                if not has_first_timestamp:
+                    first_timestamp = timestamp
+                    timestamp = 0
+                    has_first_timestamp = True
+                else:
+                    timestamp -= first_timestamp
                 timestamps.add(timestamp)
                 for awaiting in awaiting_timestamp_buffer:
                     id_name = awaiting[0]
                     value = awaiting[1]
                     if id_name not in data:
                         data[id_name] = {}
-                        data[id_name][timestamp] = value
+                    data[id_name][timestamp] = value
                     print(f'Id: {id_name}, Timestamp: {timestamp}, Value: {value}')
+                awaiting_timestamp_buffer.clear()
                 i += 4
             else:
                 print(f'ERR: Invalid timestamp at byte {i}')
+                print(raw_data[i + 3])
+                print(len(awaiting_timestamp_buffer))
                 sys.exit()
         else:
             print(struct.unpack('I', raw_data[i:i+3] + bytes(1)))

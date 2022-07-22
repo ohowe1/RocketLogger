@@ -6,6 +6,7 @@
 #include "Adafruit_ST7789.h"
 #include "Readable_Adafruit_LSM6DS33.h"
 #include "BluetoothManager.h"
+#include "LaunchDetector.h"
 
 #define BLACK    0x0000
 #define BLUE     0x001F
@@ -35,13 +36,13 @@ const unsigned long updateTimeMs = 100;
 
 // Do not have any ids >= 192
 // 1 rad/s is 6548
-Entry gyroXEntry = {0, 350, 0};
-Entry gyroYEntry = {1, 350, 0};
-Entry gyroZEntry = {2, 350, 0};
+Entry gyroXEntry = {0, 700, 0};
+Entry gyroYEntry = {1, 700, 0};
+Entry gyroZEntry = {2, 700, 0};
 // 1 m/s^2 is 417 units
-Entry accelXEntry = {3, 40, 0};
-Entry accelYEntry = {4, 40, 0};
-Entry accelZEntry = {5, 40, 0};
+Entry accelXEntry = {3, 80, 0};
+Entry accelYEntry = {4, 80, 0};
+Entry accelZEntry = {5, 80, 0};
 // 1 gauss is 6842 units
 Entry magXEntry = {6, 6842, 0};
 Entry magYEntry = {7, 6842, 0};
@@ -49,9 +50,9 @@ Entry magZEntry = {8, 6842, 0};
 // 1 is 1 Pa. 1 foot in altitude is about 5 Pa
 Entry pressureEntry = {9, 5, 0};
 // 1 degree c is 256
-Entry interiorTemperatureEntry = {10, 128, 0};
+Entry interiorTemperatureEntry = {10, 256, 0};
 // 1 degree c is 100
-Entry exteriorTemperatureEntry = {11, 50, 0};
+Entry exteriorTemperatureEntry = {11, 100, 0};
 
 struct EntryData {
     int32_t idAndValue;
@@ -74,43 +75,9 @@ Adafruit_SPIFlash flash(&flashTransport);
 FatFileSystem fatFileSystem;
 File logFile;
 
+LaunchDetector* launchDetector = new LaunchDetector();
+
 bool inLogMode;
-
-void writeBytesAndCheckCorruption(uint8_t* bytes, size_t amount) {
-    int written = (int) logFile.write(bytes, amount);
-    if (written < (int) amount && written != -1) {
-        // We do not want a partial entry because that will corrupt everything
-        logFile.seekCur(-written);
-    }
-}
-
-void logValue(uint8_t id, int32_t value) {
-    EntryData newData = {((value << 8) | (id))};
-
-    writeBytesAndCheckCorruption(reinterpret_cast<uint8_t*>(&newData), sizeof(EntryData));
-}
-
-int logIfAboveEpoch(int32_t value, Entry& entry) {
-    if (abs(value - entry.lastWrittenValue) >= entry.epoch) {
-        entry.lastWrittenValue = value;
-        logValue(entry.id, value);
-        return 1;
-    }
-    return 0;
-}
-
-void logTimeStamp(uint8_t amountLogged, uint32_t timeStamp) {
-    uint32_t amountLoggedFlagged = (amountLogged << 24) | 0x00ffffff;
-    TimeStampData timeStampData = {amountLoggedFlagged, timeStamp};
-
-    writeBytesAndCheckCorruption(reinterpret_cast<uint8_t*>(&timeStampData), sizeof(TimeStampData));
-}
-
-int initialLog(int32_t value, Entry& entry) {
-    entry.lastWrittenValue = value;
-    logValue(entry.id, value);
-    return 1;
-}
 
 void clearDisplay() {
     display->fillScreen(BLACK);
@@ -174,6 +141,43 @@ void initializeDisplay() {
     }
 }
 
+void writeBytesAndCheckCorruption(uint8_t* bytes, size_t amount) {
+    int written = (int) logFile.write(bytes, amount);
+    if (written != (int) amount) {
+        // We do not want a partial entry because that will corrupt everything
+        logFile.seekSet(0);
+        logFile.write(bytes, amount);
+    }
+}
+
+void logValue(uint8_t id, int32_t value) {
+    EntryData newData = {((value << 8) | (id))};
+
+    writeBytesAndCheckCorruption(reinterpret_cast<uint8_t*>(&newData), sizeof(EntryData));
+}
+
+int logIfAboveEpoch(int32_t value, Entry& entry) {
+    if (abs(value - entry.lastWrittenValue) >= entry.epoch) {
+        entry.lastWrittenValue = value;
+        logValue(entry.id, value);
+        return 1;
+    }
+    return 0;
+}
+
+void logTimeStamp(uint8_t amountLogged, uint32_t timeStamp) {
+    uint32_t amountLoggedFlagged = (amountLogged << 24) | 0x00ffffff;
+    TimeStampData timeStampData = {amountLoggedFlagged, timeStamp};
+
+    writeBytesAndCheckCorruption(reinterpret_cast<uint8_t*>(&timeStampData), sizeof(TimeStampData));
+}
+
+int initialLog(int32_t value, Entry& entry) {
+    entry.lastWrittenValue = value;
+    logValue(entry.id, value);
+    return 1;
+}
+
 void logModeSetup() {
     clearDisplay();
     displayWrapped("Logging will start in 2 seconds", 2);
@@ -222,6 +226,11 @@ void logModeLoop() {
     // Left button is do not record button
     if (currentTime - lastUpdateMs >= updateTimeMs && digitalRead(LEFT_BUTTON)) {
         accelGyroSensor->read();
+        launchDetector->update(accelGyroSensor->accX, accelGyroSensor->accY, accelGyroSensor->accZ);
+        if (!launchDetector->hasLaunched() || launchDetector->hasLanded()) {
+            return;
+        }
+
         amountWritten += logIfAboveEpoch(accelGyroSensor->rawGyroX, gyroXEntry);
         amountWritten += logIfAboveEpoch(accelGyroSensor->rawGyroY, gyroYEntry);
         amountWritten += logIfAboveEpoch(accelGyroSensor->rawGyroZ, gyroZEntry);

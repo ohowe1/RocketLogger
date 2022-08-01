@@ -27,5 +27,6 @@ void LaunchDetector::update(float xAcceleration, float yAcceleration, float zAcc
     launched = magnitudeSquared >= sq(4 * 9.8);
     if (launched) {
         launchTimestamp = millis();
+        tone(46, 500, 10000);
     }
 }

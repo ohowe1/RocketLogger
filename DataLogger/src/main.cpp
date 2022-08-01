@@ -145,8 +145,7 @@ void writeBytesAndCheckCorruption(uint8_t* bytes, size_t amount) {
     int written = (int) logFile.write(bytes, amount);
     if (written != (int) amount) {
         // We do not want a partial entry because that will corrupt everything
-        logFile.seekSet(0);
-        logFile.write(bytes, amount);
+        logFile.seekCur(-written);
     }
 }
 
@@ -319,7 +318,7 @@ void retrieveModeSetup() {
                     displayWrapped("File erased", 2);
                     display->println();
                     displayWrapped("Use reset button to proceed", 2);
-                    tone(TONE_PIN, 1000, 100);
+                    tone(TONE_PIN, 100, 100);
                     suspend();
                 }
                 fail("Failed to erase file");

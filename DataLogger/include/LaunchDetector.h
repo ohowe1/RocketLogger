@@ -1,7 +1,7 @@
 #pragma once
 #include "Arduino.h"
 
-#define BUFFER_SIZE 5
+#define BUFFER_SIZE 30
 class LaunchDetector {
 public:
     void update(float xAcceleration, float yAcceleration, float zAcceleration);
